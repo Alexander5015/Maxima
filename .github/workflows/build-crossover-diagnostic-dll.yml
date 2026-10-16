@@ -72,6 +72,15 @@ jobs:
           # All other Maxima files stay pinned to the beta10.1 submodule commit.
           Write-Host "Applied only the connection.rs PID fix and core/mod.rs exit-status logging; base Maxima revision remains $expectedMaximaCommit."
 
+      # The generated bridge file is deterministic for the pinned KYBER source.
+      # Maxima diagnostic changes are internal and do not change the bridge API.
+      - name: Restore cached KYBER beta10.1 Rust bridge bindings
+        id: frb-bindings-cache
+        uses: actions/cache@v4
+        with:
+          path: kyber-source/Launcher/rust/src/frb_generated.rs
+          key: kyber-frb-bindings-920dcc247b638f711402209155d7748cd55979ec-v1
+
       - name: Enable Git long paths for Windows dependency checkouts
         shell: pwsh
         run: git config --system core.longpaths true
@@ -86,6 +95,7 @@ jobs:
         run: rustc +nightly-2026-04-06 --version --verbose
 
       - name: Install Protoc
+        if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
         uses: arduino/setup-protoc@v3
         with:
           version: 23.x
@@ -97,11 +107,13 @@ jobs:
       # Flutter/Melos bootstrap so the matching Flutter Rust Bridge bindings
       # are generated before compiling rust_lib.dll.
       - name: Set up Flutter (KYBER beta10.1 channel)
+        if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
         uses: subosito/flutter-action@v2.12.0
         with:
           channel: master
 
       - name: Set up Melos
+        if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
         run: flutter pub global activate melos 7.1.1
 
       - name: Work around yanked crates.io zip 2.4.2 for diagnostic build
@@ -125,7 +137,14 @@ jobs:
 
           Set-Content -LiteralPath $manifest -Value ($text.Replace($needle, $patch)) -NoNewline -Encoding utf8
 
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "kyber-source/Launcher/rust -> target"
+          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
+
       - name: Generate KYBER beta10.1 workspace bindings
+        if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
         working-directory: kyber-source
         run: melos bootstrap
 
@@ -136,12 +155,6 @@ jobs:
           if (-not (Test-Path $generated)) {
             throw "KYBER codegen did not generate Launcher/rust/src/frb_generated.rs"
           }
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "kyber-source/Launcher/rust -> target"
-          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
 
       - name: Build KYBER Rust DLL
         shell: pwsh

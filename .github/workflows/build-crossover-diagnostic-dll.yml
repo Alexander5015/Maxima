@@ -1,0 +1,87 @@
+name: Build KYBER diagnostic DLL
+
+on:
+  push:
+    branches:
+      - debug/crossover-pid-diagnostics
+    paths:
+      - "maxima-lib/src/lsx/connection.rs"
+      - ".github/workflows/build-crossover-diagnostic-dll.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-dll:
+    name: Build rust_lib.dll with patched Maxima source
+    runs-on: windows-latest
+    steps:
+      - name: Check out this Maxima fork
+        uses: actions/checkout@v4
+        with:
+          path: maxima-source
+
+      - name: Check out KYBER beta 10.1
+        uses: actions/checkout@v4
+        with:
+          repository: ArmchairDevelopers/Kyber
+          ref: ver/beta10.1
+          path: kyber-source
+          submodules: true
+          fetch-depth: 1
+
+      - name: Overlay this Maxima fork into KYBER's Maxima submodule
+        shell: pwsh
+        run: |
+          $maximaSource = Join-Path $env:GITHUB_WORKSPACE "maxima-source"
+          $maximaDestination = Join-Path $env:GITHUB_WORKSPACE "kyber-source\ThirdParty\Maxima"
+
+          if (-not (Test-Path (Join-Path $maximaSource "maxima-lib\src\lsx\connection.rs"))) {
+            throw "Maxima source checkout is missing maxima-lib/src/lsx/connection.rs"
+          }
+
+          if (Test-Path $maximaDestination) {
+            Remove-Item -LiteralPath $maximaDestination -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $maximaDestination -Force | Out-Null
+
+          Get-ChildItem -LiteralPath $maximaSource -Force |
+            Where-Object { $_.Name -ne ".git" } |
+            ForEach-Object {
+              Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $maximaDestination $_.Name) -Recurse -Force
+            }
+
+          if (-not (Test-Path (Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"))) {
+            throw "Maxima overlay failed; connection.rs was not copied"
+          }
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "kyber-source/Launcher/rust -> target"
+          shared-key: windows-kyber-diagnostic-dll
+
+      - name: Build KYBER Rust DLL
+        shell: pwsh
+        run: |
+          cargo +nightly build --release --manifest-path "$env:GITHUB_WORKSPACE\kyber-source\Launcher\rust\Cargo.toml"
+
+          $dll = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\target\release\rust_lib.dll"
+          if (-not (Test-Path $dll)) {
+            throw "Build completed but rust_lib.dll was not found at $dll"
+          }
+
+      - name: Upload DLL artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-lib-dll-crossover-pid-diagnostics
+          path: kyber-source/Launcher/rust/target/release/rust_lib.dll
+          if-no-files-found: error
+          retention-days: 14

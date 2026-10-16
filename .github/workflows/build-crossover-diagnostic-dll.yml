@@ -93,6 +93,7 @@ jobs:
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly-2026-04-06
+          components: rustfmt
 
       - name: Verify Rust compiler version
         shell: pwsh

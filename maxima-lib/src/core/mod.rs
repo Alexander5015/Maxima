@@ -459,9 +459,24 @@ impl Maxima {
         }
 
         let playing = self.playing.as_mut().unwrap();
+        let process_id = playing.process_mut().id();
         match playing.process_mut().try_wait() {
             Ok(None) => return,
-            _ => (),
+            Ok(Some(status)) => {
+                info!(
+                    "Game process exited: pid={}, status={:?}, exit_code={:?}",
+                    process_id,
+                    status,
+                    status.code()
+                );
+            }
+            Err(err) => {
+                warn!(
+                    "Failed to query game process status: pid={}, error={}",
+                    process_id,
+                    err
+                );
+            }
         }
 
         info!("Game stopped");

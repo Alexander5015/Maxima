@@ -153,25 +153,17 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
     let sys = System::new_all();
     for e in sys.processes() {
         let (p_pid, process) = e;
-        if process.cmd().is_empty() {
-            continue;
-        }
-
-        let mut cmd = process.cmd()[0].to_owned();
-
-        // Wine path handling
-        if cfg!(unix) && cmd.starts_with("Z:") {
-            cmd = cmd.replace("Z:", "").replace('\\', "/");
-        }
 
         // Temporary diagnostics for process discovery under Wine/CrossOver.
-        // These logs do not alter PID selection. Inspect both the process name
-        // and all command-line arguments because sysinfo may expose them
-        // differently under compatibility layers.
+        // Log a relevant process even when sysinfo cannot provide its command
+        // line; otherwise an empty cmd() silently hides the exact Wine case
+        // we need to diagnose.
         let process_name = process.name().to_owned();
         let process_name_lower = process_name.to_ascii_lowercase();
         let all_args = process.cmd().join(" ");
         let all_args_lower = all_args.to_ascii_lowercase();
+        let exe_string = process.exe().to_string_lossy().into_owned();
+        let exe_lower = exe_string.to_ascii_lowercase();
         let has_mx_launch_id = process
             .environ()
             .iter()
@@ -181,30 +173,38 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
             key == "MXLaunchId" && value == context.launch_id()
         });
 
-        if process_name_lower.contains("starwars")
+        let is_game_candidate = process_name_lower.contains("starwars")
             || process_name_lower.contains("battlefront")
             || all_args_lower.contains("starwars")
             || all_args_lower.contains("battlefront")
-            || has_mx_launch_id
-        {
-            let expected = context.game_path();
-            let normalized_cmd = cmd.replace('\\', "/").to_ascii_lowercase();
-            let normalized_expected =
-                expected.replace('\\', "/").to_ascii_lowercase();
+            || exe_lower.contains("starwars")
+            || exe_lower.contains("battlefront")
+            || has_mx_launch_id;
 
+        if is_game_candidate {
             info!(
-                "PID diagnostic candidate: pid={}, name={:?}, args={:?}, exe={:?}, first_arg={:?}, expected={:?}, raw_path_match={}, normalized_path_match={}, has_mx_launch_id={}, launch_id_match={}",
+                "PID diagnostic candidate: pid={}, name={:?}, args={:?}, exe={:?}, expected={:?}, cmd_empty={}, has_mx_launch_id={}, launch_id_match={}",
                 p_pid,
                 process_name,
                 process.cmd(),
-                process.exe(),
-                cmd,
-                expected,
-                cmd.starts_with(expected),
-                normalized_cmd.starts_with(&normalized_expected),
+                exe_string,
+                context.game_path(),
+                process.cmd().is_empty(),
                 has_mx_launch_id,
                 launch_id_match
             );
+        }
+
+        // Keep normal PID selection behavior unchanged for now.
+        if process.cmd().is_empty() {
+            continue;
+        }
+
+        let mut cmd = process.cmd()[0].to_owned();
+
+        // Wine path handling
+        if cfg!(unix) && cmd.starts_with("Z:") {
+            cmd = cmd.replace("Z:", "").replace('\\', "/");
         }
 
         if !cmd.starts_with(context.game_path()) {

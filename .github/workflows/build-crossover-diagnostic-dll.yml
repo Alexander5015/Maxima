@@ -96,24 +96,6 @@ jobs:
       - name: Set up Melos
         run: flutter pub global activate melos 7.1.1
 
-      - name: Generate KYBER beta10.1 workspace bindings
-        working-directory: kyber-source
-        run: melos bootstrap
-
-      - name: Verify Flutter Rust Bridge generated source
-        shell: pwsh
-        run: |
-          $generated = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\src\frb_generated.rs"
-          if (-not (Test-Path $generated)) {
-            throw "KYBER codegen did not generate Launcher/rust/src/frb_generated.rs"
-          }
-
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: "kyber-source/Launcher/rust -> target"
-          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
-
       - name: Work around yanked crates.io zip 2.4.2 for diagnostic build
         shell: pwsh
         run: |
@@ -134,6 +116,24 @@ jobs:
           }
 
           Set-Content -LiteralPath $manifest -Value ($text.Replace($needle, $patch)) -NoNewline -Encoding utf8
+
+      - name: Generate KYBER beta10.1 workspace bindings
+        working-directory: kyber-source
+        run: melos bootstrap
+
+      - name: Verify Flutter Rust Bridge generated source
+        shell: pwsh
+        run: |
+          $generated = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\src\frb_generated.rs"
+          if (-not (Test-Path $generated)) {
+            throw "KYBER codegen did not generate Launcher/rust/src/frb_generated.rs"
+          }
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "kyber-source/Launcher/rust -> target"
+          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
 
       - name: Build KYBER Rust DLL
         shell: pwsh

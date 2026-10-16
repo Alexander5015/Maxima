@@ -76,6 +76,29 @@ jobs:
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
 
+      # The Rust crate declares `mod frb_generated;`, but this file is
+      # generated and gitignored in KYBER. Mirror the beta10.1 launcher CI's
+      # Flutter/Melos bootstrap so the matching Flutter Rust Bridge bindings
+      # are generated before compiling rust_lib.dll.
+      - name: Set up Flutter (KYBER beta10.1 channel)
+        uses: subosito/flutter-action@v2.12.0
+        with:
+          channel: master
+
+      - name: Set up Melos
+        run: flutter pub global activate melos 7.1.1
+
+      - name: Generate KYBER beta10.1 workspace bindings
+        run: melos bootstrap
+
+      - name: Verify Flutter Rust Bridge generated source
+        shell: pwsh
+        run: |
+          $generated = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\src\frb_generated.rs"
+          if (-not (Test-Path $generated)) {
+            throw "KYBER codegen did not generate Launcher/rust/src/frb_generated.rs"
+          }
+
       - name: Cache Rust dependencies
         uses: Swatinem/rust-cache@v2
         with:

@@ -1,6 +1,6 @@
 use derive_getters::Getters;
 use lazy_static::lazy_static;
-use log::{debug, error, warn};
+use log::{debug, error, info, warn};
 use quick_xml::DeError;
 use regex::Regex;
 use std::{
@@ -162,6 +162,29 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
         // Wine path handling
         if cfg!(unix) && cmd.starts_with("Z:") {
             cmd = cmd.replace("Z:", "").replace('\\', "/");
+        }
+
+        // Temporary diagnostics for process discovery under Wine/CrossOver.
+        // These logs do not alter PID selection.
+        if cmd.to_ascii_lowercase().contains("starwarsbattlefrontii.exe") {
+            let expected = context.game_path();
+            let normalized_cmd = cmd.replace('\\', "/").to_ascii_lowercase();
+            let normalized_expected =
+                expected.replace('\\', "/").to_ascii_lowercase();
+            let launch_id_match = process.environ().iter().any(|entry| {
+                let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+                key == "MXLaunchId" && value == context.launch_id()
+            });
+
+            info!(
+                "PID diagnostic: pid={}, cmd={:?}, expected={:?}, raw_path_match={}, normalized_path_match={}, launch_id_match={}",
+                p_pid,
+                cmd,
+                expected,
+                cmd.starts_with(expected),
+                normalized_cmd.starts_with(&normalized_expected),
+                launch_id_match
+            );
         }
 
         if !cmd.starts_with(context.game_path()) {

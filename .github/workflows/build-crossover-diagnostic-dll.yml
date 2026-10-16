@@ -64,6 +64,10 @@ jobs:
           # Print a small provenance summary so the artifact is traceable.
           Write-Host "Applied only the diagnostic connection.rs change; all other Maxima files stay at $expectedMaximaCommit."
 
+      - name: Enable Git long paths for Windows dependency checkouts
+        shell: pwsh
+        run: git config --system core.longpaths true
+
       - name: Install KYBER beta10.1 Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:

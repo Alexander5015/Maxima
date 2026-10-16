@@ -6,6 +6,7 @@ on:
       - debug/crossover-pid-diagnostics
     paths:
       - "maxima-lib/src/lsx/connection.rs"
+      - "maxima-lib/src/core/mod.rs"
       - ".github/workflows/build-crossover-diagnostic-dll.yml"
   workflow_dispatch:
 
@@ -32,7 +33,7 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Verify pinned Maxima submodule and overlay diagnostic file only
+      - name: Verify pinned Maxima submodule and overlay diagnostic files
         shell: pwsh
         run: |
           $workspace = $env:GITHUB_WORKSPACE
@@ -49,20 +50,27 @@ jobs:
             throw "Unexpected Maxima submodule commit. Expected $expectedMaximaCommit; got $actualMaximaCommit"
           }
 
-          $patchedFile = Join-Path $maximaSource "maxima-lib\src\lsx\connection.rs"
-          $destinationFile = Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"
+          $connectionSource = Join-Path $maximaSource "maxima-lib\src\lsx\connection.rs"
+          $connectionDestination = Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"
+          $coreSource = Join-Path $maximaSource "maxima-lib\src\core\mod.rs"
+          $coreDestination = Join-Path $maximaDestination "maxima-lib\src\core\mod.rs"
 
-          if (-not (Test-Path $patchedFile)) {
-            throw "Diagnostic source file not found: $patchedFile"
+          foreach ($file in @(
+            @{ Source = $connectionSource; Destination = $connectionDestination },
+            @{ Source = $coreSource; Destination = $coreDestination }
+          )) {
+            if (-not (Test-Path $file.Source)) {
+              throw "Diagnostic source file not found: $($file.Source)"
+            }
+            if (-not (Test-Path $file.Destination)) {
+              throw "Pinned Maxima target file not found: $($file.Destination)"
+            }
+            Copy-Item -LiteralPath $file.Source -Destination $file.Destination -Force
+            Write-Host "Overlaid diagnostic source: $($file.Source)"
           }
-          if (-not (Test-Path $destinationFile)) {
-            throw "Pinned Maxima connection.rs not found: $destinationFile"
-          }
 
-          Copy-Item -LiteralPath $patchedFile -Destination $destinationFile -Force
-
-          # Print a small provenance summary so the artifact is traceable.
-          Write-Host "Applied only the diagnostic connection.rs change; all other Maxima files stay at $expectedMaximaCommit."
+          # All other Maxima files stay pinned to the beta10.1 submodule commit.
+          Write-Host "Applied only the connection.rs PID fix and core/mod.rs exit-status logging; base Maxima revision remains $expectedMaximaCommit."
 
       - name: Enable Git long paths for Windows dependency checkouts
         shell: pwsh

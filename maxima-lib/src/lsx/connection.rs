@@ -151,6 +151,11 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
     let mut pid = None;
 
     let sys = System::new_all();
+    info!(
+        "PID diagnostic active: expected_game_path={:?}, process_count={}",
+        context.game_path(),
+        sys.processes().len()
+    );
     for e in sys.processes() {
         let (p_pid, process) = e;
 

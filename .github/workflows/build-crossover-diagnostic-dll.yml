@@ -89,6 +89,7 @@ jobs:
         run: flutter pub global activate melos 7.1.1
 
       - name: Generate KYBER beta10.1 workspace bindings
+        working-directory: kyber-source
         run: melos bootstrap
 
       - name: Verify Flutter Rust Bridge generated source

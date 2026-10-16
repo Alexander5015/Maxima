@@ -148,27 +148,53 @@ impl ConnectionState {
 }
 
 pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
-    let mut pid = None;
-
     let sys = System::new_all();
+    let expected = context.game_path();
+    let normalized_expected = expected
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_ascii_lowercase();
+
     info!(
         "PID diagnostic active: expected_game_path={:?}, process_count={}",
-        context.game_path(),
+        expected,
         sys.processes().len()
     );
-    for e in sys.processes() {
-        let (p_pid, process) = e;
 
-        // Temporary diagnostics for process discovery under Wine/CrossOver.
-        // Log a relevant process even when sysinfo cannot provide its command
-        // line; otherwise an empty cmd() silently hides the exact Wine case
-        // we need to diagnose.
+    for (p_pid, process) in sys.processes() {
         let process_name = process.name().to_owned();
         let process_name_lower = process_name.to_ascii_lowercase();
         let all_args = process.cmd().join(" ");
         let all_args_lower = all_args.to_ascii_lowercase();
         let exe_string = process.exe().to_string_lossy().into_owned();
         let exe_lower = exe_string.to_ascii_lowercase();
+
+        // sysinfo can return an empty command line for Wine/CrossOver
+        // processes. Prefer the executable path, falling back to argv[0]
+        // on platforms where the executable path is unavailable.
+        let mut candidate_path = if !exe_string.is_empty() {
+            exe_string.clone()
+        } else {
+            process.cmd().first().cloned().unwrap_or_default()
+        };
+
+        // Retain the existing Wine Z: path handling for Unix builds.
+        if cfg!(unix) && candidate_path.starts_with("Z:") {
+            candidate_path = candidate_path.replace("Z:", "").replace('\\', "/");
+        }
+
+        let normalized_candidate = candidate_path
+            .replace('\\', "/")
+            .to_ascii_lowercase()
+            .trim_end_matches('/')
+            .to_owned();
+
+        // Match a path inside the configured game directory, not merely a
+        // string prefix (so similarly named sibling directories do not match).
+        let path_matches = !normalized_candidate.is_empty()
+            && (normalized_candidate == normalized_expected
+                || normalized_candidate.starts_with(&format!("{}/", normalized_expected)));
+
         let has_mx_launch_id = process
             .environ()
             .iter()
@@ -184,50 +210,39 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
             || all_args_lower.contains("battlefront")
             || exe_lower.contains("starwars")
             || exe_lower.contains("battlefront")
-            || has_mx_launch_id;
+            || has_mx_launch_id
+            || path_matches;
 
         if is_game_candidate {
             info!(
-                "PID diagnostic candidate: pid={}, name={:?}, args={:?}, exe={:?}, expected={:?}, cmd_empty={}, has_mx_launch_id={}, launch_id_match={}",
+                "PID diagnostic candidate: pid={}, name={:?}, args={:?}, exe={:?}, selected_path={:?}, expected={:?}, cmd_empty={}, path_matches={}, has_mx_launch_id={}, launch_id_match={}",
                 p_pid,
                 process_name,
                 process.cmd(),
                 exe_string,
-                context.game_path(),
+                candidate_path,
+                expected,
                 process.cmd().is_empty(),
+                path_matches,
                 has_mx_launch_id,
                 launch_id_match
             );
         }
 
-        // Keep normal PID selection behavior unchanged for now.
-        if process.cmd().is_empty() {
-            continue;
-        }
-
-        let mut cmd = process.cmd()[0].to_owned();
-
-        // Wine path handling
-        if cfg!(unix) && cmd.starts_with("Z:") {
-            cmd = cmd.replace("Z:", "").replace('\\', "/");
-        }
-
-        if !cmd.starts_with(context.game_path()) {
-            continue;
-        }
-
-        for ele in process.environ() {
-            let (key, value) = ele.split_once('=').unwrap_or((ele, ""));
-            if key != "MXLaunchId" || value != context.launch_id() {
-                continue;
-            }
-
-            pid = Some(p_pid.as_u32());
-            break;
+        // The launch ID can also be present on maxima-bootstrap.exe, so use
+        // both the executable's path and the launch ID to identify the game.
+        if path_matches && launch_id_match {
+            info!(
+                "PID diagnostic selected game PID: pid={}, path={:?}",
+                p_pid,
+                candidate_path
+            );
+            return Ok(p_pid.as_u32());
         }
     }
 
-    Ok(pid.unwrap_or(0))
+    warn!("PID diagnostic: no process matched both game path and launch ID");
+    Ok(0)
 }
 
 #[cfg(target_os = "windows")]

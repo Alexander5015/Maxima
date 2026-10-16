@@ -464,7 +464,7 @@ impl Maxima {
             Ok(None) => return,
             Ok(Some(status)) => {
                 info!(
-                    "Game process exited: pid={}, status={:?}, exit_code={:?}",
+                    "Game process exited: pid={:?}, status={:?}, exit_code={:?}",
                     process_id,
                     status,
                     status.code()
@@ -472,7 +472,7 @@ impl Maxima {
             }
             Err(err) => {
                 warn!(
-                    "Failed to query game process status: pid={}, error={}",
+                    "Failed to query game process status: pid={:?}, error={}",
                     process_id,
                     err
                 );

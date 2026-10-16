@@ -65,7 +65,9 @@ jobs:
           Write-Host "Applied only the diagnostic connection.rs change; all other Maxima files stay at $expectedMaximaCommit."
 
       - name: Install KYBER beta10.1 Rust toolchain
-        uses: dtolnay/rust-toolchain@nightly-2026-04-06
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly-2026-04-06
 
       - name: Verify Rust compiler version
         shell: pwsh

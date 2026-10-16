@@ -165,24 +165,44 @@ pub fn get_os_pid(context: &ActiveGameContext) -> Result<u32, NativeError> {
         }
 
         // Temporary diagnostics for process discovery under Wine/CrossOver.
-        // These logs do not alter PID selection.
-        if cmd.to_ascii_lowercase().contains("starwarsbattlefrontii.exe") {
+        // These logs do not alter PID selection. Inspect both the process name
+        // and all command-line arguments because sysinfo may expose them
+        // differently under compatibility layers.
+        let process_name = process.name().to_owned();
+        let process_name_lower = process_name.to_ascii_lowercase();
+        let all_args = process.cmd().join(" ");
+        let all_args_lower = all_args.to_ascii_lowercase();
+        let has_mx_launch_id = process
+            .environ()
+            .iter()
+            .any(|entry| entry.starts_with("MXLaunchId="));
+        let launch_id_match = process.environ().iter().any(|entry| {
+            let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+            key == "MXLaunchId" && value == context.launch_id()
+        });
+
+        if process_name_lower.contains("starwars")
+            || process_name_lower.contains("battlefront")
+            || all_args_lower.contains("starwars")
+            || all_args_lower.contains("battlefront")
+            || has_mx_launch_id
+        {
             let expected = context.game_path();
             let normalized_cmd = cmd.replace('\\', "/").to_ascii_lowercase();
             let normalized_expected =
                 expected.replace('\\', "/").to_ascii_lowercase();
-            let launch_id_match = process.environ().iter().any(|entry| {
-                let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-                key == "MXLaunchId" && value == context.launch_id()
-            });
 
             info!(
-                "PID diagnostic: pid={}, cmd={:?}, expected={:?}, raw_path_match={}, normalized_path_match={}, launch_id_match={}",
+                "PID diagnostic candidate: pid={}, name={:?}, args={:?}, exe={:?}, first_arg={:?}, expected={:?}, raw_path_match={}, normalized_path_match={}, has_mx_launch_id={}, launch_id_match={}",
                 p_pid,
+                process_name,
+                process.cmd(),
+                process.exe(),
                 cmd,
                 expected,
                 cmd.starts_with(expected),
                 normalized_cmd.starts_with(&normalized_expected),
+                has_mx_launch_id,
                 launch_id_match
             );
         }

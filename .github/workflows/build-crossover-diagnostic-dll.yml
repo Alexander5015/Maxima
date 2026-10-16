@@ -14,50 +14,62 @@ permissions:
 
 jobs:
   build-windows-dll:
-    name: Build rust_lib.dll with patched Maxima source
+    name: Build rust_lib.dll with beta10.1-pinned dependencies
     runs-on: windows-latest
     steps:
-      - name: Check out this Maxima fork
+      - name: Check out this Maxima fork (diagnostic source)
         uses: actions/checkout@v4
         with:
           path: maxima-source
 
-      - name: Check out KYBER beta 10.1
+      - name: Check out exact KYBER beta10.1 source
         uses: actions/checkout@v4
         with:
           repository: ArmchairDevelopers/Kyber
-          ref: ver/beta10.1
+          # Immutable commit for the beta10.1 tree, including its submodule gitlink.
+          ref: 920dcc247b638f711402209155d7748cd55979ec
           path: kyber-source
           submodules: true
           fetch-depth: 1
 
-      - name: Overlay this Maxima fork into KYBER's Maxima submodule
+      - name: Verify pinned Maxima submodule and overlay diagnostic file only
         shell: pwsh
         run: |
-          $maximaSource = Join-Path $env:GITHUB_WORKSPACE "maxima-source"
-          $maximaDestination = Join-Path $env:GITHUB_WORKSPACE "kyber-source\ThirdParty\Maxima"
+          $workspace = $env:GITHUB_WORKSPACE
+          $maximaSource = Join-Path $workspace "maxima-source"
+          $maximaDestination = Join-Path $workspace "kyber-source\ThirdParty\Maxima"
+          $expectedMaximaCommit = "478d720da19efc335d85b7204eb2eba00a5e207c"
+          $actualMaximaCommit = (git -C $maximaDestination rev-parse HEAD).Trim()
 
-          if (-not (Test-Path (Join-Path $maximaSource "maxima-lib\src\lsx\connection.rs"))) {
-            throw "Maxima source checkout is missing maxima-lib/src/lsx/connection.rs"
+          Write-Host "KYBER commit:"
+          git -C (Join-Path $workspace "kyber-source") rev-parse HEAD
+          Write-Host "Maxima submodule commit: $actualMaximaCommit"
+
+          if ($actualMaximaCommit -ne $expectedMaximaCommit) {
+            throw "Unexpected Maxima submodule commit. Expected $expectedMaximaCommit; got $actualMaximaCommit"
           }
 
-          if (Test-Path $maximaDestination) {
-            Remove-Item -LiteralPath $maximaDestination -Recurse -Force
+          $patchedFile = Join-Path $maximaSource "maxima-lib\src\lsx\connection.rs"
+          $destinationFile = Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"
+
+          if (-not (Test-Path $patchedFile)) {
+            throw "Diagnostic source file not found: $patchedFile"
           }
-          New-Item -ItemType Directory -Path $maximaDestination -Force | Out-Null
-
-          Get-ChildItem -LiteralPath $maximaSource -Force |
-            Where-Object { $_.Name -ne ".git" } |
-            ForEach-Object {
-              Copy-Item -LiteralPath $_.FullName -Destination (Join-Path $maximaDestination $_.Name) -Recurse -Force
-            }
-
-          if (-not (Test-Path (Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"))) {
-            throw "Maxima overlay failed; connection.rs was not copied"
+          if (-not (Test-Path $destinationFile)) {
+            throw "Pinned Maxima connection.rs not found: $destinationFile"
           }
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+          Copy-Item -LiteralPath $patchedFile -Destination $destinationFile -Force
+
+          # Print a small provenance summary so the artifact is traceable.
+          Write-Host "Applied only the diagnostic connection.rs change; all other Maxima files stay at $expectedMaximaCommit."
+
+      - name: Install KYBER beta10.1 Rust toolchain
+        uses: dtolnay/rust-toolchain@nightly-2026-04-06
+
+      - name: Verify Rust compiler version
+        shell: pwsh
+        run: rustc +nightly-2026-04-06 --version --verbose
 
       - name: Install Protoc
         uses: arduino/setup-protoc@v3
@@ -66,12 +78,33 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "kyber-source/Launcher/rust -> target"
-          shared-key: windows-kyber-diagnostic-dll
+          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
+
+      - name: Work around yanked crates.io zip 2.4.2 for diagnostic build
+        shell: pwsh
+        run: |
+          # KYBER beta10.1 pins zip 2.4.2, but crates.io currently marks that
+          # version yanked and Launcher/rust/Cargo.lock is intentionally ignored.
+          # Use the upstream immutable source tag for the same 2.4.2 release
+          # only in this temporary CI checkout; don't alter the user's repo source.
+          $manifest = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\Cargo.toml"
+          $text = Get-Content -LiteralPath $manifest -Raw
+          $needle = "flate2 = { git = 'https://github.com/ArmchairDevelopers/flate2-rs.git' }"
+          $patch = $needle + "`nzip = { git = 'https://github.com/zip-rs/zip2.git', tag = 'v2.4.2' }"
+
+          if (-not $text.Contains($needle)) {
+            throw "Could not find expected [patch.crates-io] insertion point in Launcher/rust/Cargo.toml"
+          }
+          if ($text.Contains("zip = { git = 'https://github.com/zip-rs/zip2.git'")) {
+            throw "zip git patch already exists; refusing to apply it twice"
+          }
+
+          Set-Content -LiteralPath $manifest -Value ($text.Replace($needle, $patch)) -NoNewline -Encoding utf8
 
       - name: Build KYBER Rust DLL
         shell: pwsh
         run: |
-          cargo +nightly build --release --manifest-path "$env:GITHUB_WORKSPACE\kyber-source\Launcher\rust\Cargo.toml"
+          cargo +nightly-2026-04-06 build --release --manifest-path "$env:GITHUB_WORKSPACE\kyber-source\Launcher\rust\Cargo.toml"
 
           $dll = Join-Path $env:GITHUB_WORKSPACE "kyber-source\Launcher\rust\target\release\rust_lib.dll"
           if (-not (Test-Path $dll)) {

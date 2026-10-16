@@ -7,6 +7,7 @@ on:
     paths:
       - "maxima-lib/src/lsx/connection.rs"
       - "maxima-lib/src/core/mod.rs"
+      - "maxima-lib/src/core/launch.rs"
       - ".github/workflows/build-crossover-diagnostic-dll.yml"
   workflow_dispatch:
 
@@ -54,10 +55,13 @@ jobs:
           $connectionDestination = Join-Path $maximaDestination "maxima-lib\src\lsx\connection.rs"
           $coreSource = Join-Path $maximaSource "maxima-lib\src\core\mod.rs"
           $coreDestination = Join-Path $maximaDestination "maxima-lib\src\core\mod.rs"
+          $launchSource = Join-Path $maximaSource "maxima-lib\src\core\launch.rs"
+          $launchDestination = Join-Path $maximaDestination "maxima-lib\src\core\launch.rs"
 
           foreach ($file in @(
             @{ Source = $connectionSource; Destination = $connectionDestination },
-            @{ Source = $coreSource; Destination = $coreDestination }
+            @{ Source = $coreSource; Destination = $coreDestination },
+            @{ Source = $launchSource; Destination = $launchDestination }
           )) {
             if (-not (Test-Path $file.Source)) {
               throw "Diagnostic source file not found: $($file.Source)"
@@ -70,7 +74,7 @@ jobs:
           }
 
           # All other Maxima files stay pinned to the beta10.1 submodule commit.
-          Write-Host "Applied only the connection.rs PID fix and core/mod.rs exit-status logging; base Maxima revision remains $expectedMaximaCommit."
+          Write-Host "Applied connection.rs PID fix, core/mod.rs exit-status logging, and launch.rs temporary ModLoader-disable test; base Maxima revision remains $expectedMaximaCommit."
 
       # The generated bridge file is deterministic for the pinned KYBER source.
       # Maxima diagnostic changes are internal and do not change the bridge API.

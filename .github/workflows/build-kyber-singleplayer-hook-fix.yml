@@ -81,7 +81,7 @@ void Server::Initialize()
       - name: Build Kyber.dll
         working-directory: kyber-source/Module
         run: |
-          bazel --output_user_root="C:\\bz" build --config=release Kyber
+          bazel --output_user_root="C:/bz" build --config=release Kyber
           $dll = Join-Path $env:GITHUB_WORKSPACE "kyber-source/Module/bazel-bin/Kyber.dll"
           if (-not (Test-Path $dll)) {
             throw "Build finished but Module/bazel-bin/Kyber.dll was not found."

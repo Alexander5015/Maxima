@@ -122,8 +122,10 @@ pub struct ActiveGameContext {
     /// PID of the actual game process discovered through its LSX connection.
     /// The Child above is maxima-bootstrap.exe, which may exit while the game
     /// continues running under Wine/CrossOver.
+    #[getter(skip)]
     game_pid: Option<u32>,
     /// Whether try_wait has already observed the bootstrap process exit.
+    #[getter(skip)]
     bootstrap_exited: bool,
     started: bool,
 }

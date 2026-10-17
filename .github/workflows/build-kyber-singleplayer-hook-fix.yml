@@ -1,0 +1,96 @@
+name: Build KYBER single-player hook fix
+
+on:
+  push:
+    branches:
+      - debug/crossover-pid-diagnostics
+    paths:
+      - ".github/workflows/build-kyber-singleplayer-hook-fix.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-kyber-module:
+    name: Build Kyber.dll from pinned beta10 baseline plus single-player hook fix
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Check out KYBER beta10 baseline
+        uses: actions/checkout@v4
+        with:
+          repository: ArmchairDevelopers/Kyber
+          ref: 920dcc247b638f711402209155d7748cd55979ec
+          path: kyber-source
+          fetch-depth: 1
+
+      - name: Set up MSYS2
+        uses: msys2/setup-msys2@v2
+        with:
+          location: C:\\msys64
+          msystem: MSYS
+          update: true
+          install: >-
+            base-devel
+            git
+            unzip
+            zip
+
+      - name: Install Bazelisk
+        run: |
+          $toolDir = Join-Path $env:RUNNER_TEMP "bazelisk"
+          New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
+          $bazel = Join-Path $toolDir "bazel.exe"
+          Invoke-WebRequest -Uri "https://github.com/bazelbuild/bazelisk/releases/download/v1.25.0/bazelisk-windows-amd64.exe" -OutFile $bazel
+          Add-Content -Path $env:GITHUB_PATH -Value $toolDir
+          New-Item -ItemType Directory -Force -Path "C:\\bz" | Out-Null
+          git config --system core.longpaths true
+          & $bazel --version
+
+      - name: Apply the isolated single-player hook fix
+        run: |
+          $server = Join-Path $env:GITHUB_WORKSPACE "kyber-source\\Module\\Source\\Core\\Server.cpp"
+          $text = [System.IO.File]::ReadAllText($server).Replace("`r`n", "`n")
+          $needle = "void Server::Initialize()`n{`n    InitializeGameHooks();`n    InitializeGamePatches();"
+          $replacement = @"
+void Server::Initialize()
+{
+    InitializeGameHooks();
+
+    // Preserve the native socket-manager path for non-dedicated game startup.
+    if (!g_program->m_isDedicatedServer)
+    {
+        m_hooksRemoved = true;
+    }
+
+    InitializeGamePatches();
+"@
+          if (([regex]::Matches($text, [regex]::Escape($needle))).Count -ne 1) {
+            throw "Expected exactly one Server::Initialize patch point in pinned KYBER beta10 source."
+          }
+          $text = $text.Replace($needle, $replacement.TrimEnd())
+          if (-not $text.Contains("if (!g_program->m_isDedicatedServer)") -or -not $text.Contains("m_hooksRemoved = true;")) {
+            throw "Single-player hook fix was not applied."
+          }
+          [System.IO.File]::WriteAllText($server, $text, [System.Text.UTF8Encoding]::new($false))
+          Write-Host "Applied one C++ change to Module/Source/Core/Server.cpp; all other beta10 source remains pinned."
+
+      - name: Build Kyber.dll
+        working-directory: kyber-source/Module
+        run: |
+          bazel --output_user_root="C:\\bz" build --config=release Kyber
+          $dll = Join-Path $env:GITHUB_WORKSPACE "kyber-source\\Module\\bazel-bin\\Kyber.dll"
+          if (-not (Test-Path $dll)) {
+            throw "Build finished but Module/bazel-bin/Kyber.dll was not found."
+          }
+
+      - name: Upload test module
+        uses: actions/upload-artifact@v4
+        with:
+          name: kyber-dll-singleplayer-hook-fix-beta10
+          path: kyber-source/Module/bazel-bin/Kyber.dll
+          if-no-files-found: error
+          retention-days: 7

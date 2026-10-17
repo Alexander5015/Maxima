@@ -56,18 +56,19 @@ jobs:
           $text = [System.IO.File]::ReadAllText($server).Replace("`r`n", "`n")
           $needle = "void Server::Initialize()`n{`n    InitializeGameHooks();`n    InitializeGamePatches();"
           $replacement = @"
-void Server::Initialize()
-{
-    InitializeGameHooks();
+          void Server::Initialize()
+          {
+              InitializeGameHooks();
 
-    // Preserve the native socket-manager path for non-dedicated game startup.
-    if (!g_program->m_isDedicatedServer)
-    {
-        m_hooksRemoved = true;
-    }
+              // Preserve the native socket-manager path for non-dedicated game startup.
+              if (!g_program->m_isDedicatedServer)
+              {
+                  m_hooksRemoved = true;
+              }
 
-    InitializeGamePatches();
-"@
+              InitializeGamePatches();
+          }
+          "@
           if (([regex]::Matches($text, [regex]::Escape($needle))).Count -ne 1) {
             throw "Expected exactly one Server::Initialize patch point in pinned KYBER beta10 source."
           }

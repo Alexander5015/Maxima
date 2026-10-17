@@ -41,6 +41,7 @@ use derive_builder::Builder;
 use derive_getters::Getters;
 use log::{error, info, warn};
 use strum_macros::IntoStaticStr;
+use sysinfo::{ProcessExt, System, SystemExt};
 
 use std::sync::Arc;
 use thiserror::Error;
@@ -458,24 +459,72 @@ impl Maxima {
             return;
         }
 
+        // Maxima tracks the launched bootstrap/helper child here, not the
+        // executable PID discovered from the game's LSX connection. Snapshot
+        // the launch ID and game directory so an early helper exit is not
+        // mislabeled as the game's own exit.
+        let (launch_id, game_dir) = {
+            let context = self.playing.as_ref().unwrap();
+            (context.launch_id().clone(), context.game_path().clone())
+        };
+
         let playing = self.playing.as_mut().unwrap();
         let process_id = playing.process_mut().id();
         match playing.process_mut().try_wait() {
             Ok(None) => return,
             Ok(Some(status)) => {
                 info!(
-                    "Game process exited: pid={:?}, status={:?}, exit_code={:?}",
+                    "Tracked launch helper process exited: pid={:?}, status={:?}, exit_code={:?}",
                     process_id,
                     status,
                     status.code()
                 );
+
+                let sys = System::new_all();
+                let mut found_game_process = false;
+                for (pid, process) in sys.processes() {
+                    let name = process.name().to_owned();
+                    let name_lower = name.to_ascii_lowercase();
+                    let exe = process.exe().to_string_lossy().into_owned();
+                    let exe_lower = exe.to_ascii_lowercase();
+
+                    if !name_lower.contains("starwarsbattlefrontii.exe")
+                        && !exe_lower.contains("starwarsbattlefrontii.exe")
+                    {
+                        continue;
+                    }
+
+                    found_game_process = true;
+                    let launch_id_match = process.environ().iter().any(|entry| {
+                        let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+                        key == "MXLaunchId" && value == launch_id
+                    });
+
+                    info!(
+                        "Battlefront process after helper exit: pid={}, name={:?}, exe={:?}, launch_id_match={}, game_dir={:?}, args_empty={}",
+                        pid,
+                        name,
+                        exe,
+                        launch_id_match,
+                        game_dir,
+                        process.cmd().is_empty()
+                    );
+                }
+
+                if !found_game_process {
+                    info!(
+                        "No Battlefront II process visible after helper exit for launch_id={}",
+                        launch_id
+                    );
+                }
             }
             Err(err) => {
                 warn!(
-                    "Failed to query game process status: pid={:?}, error={}",
+                    "Failed to query tracked launch helper status: pid={:?}, error={}",
                     process_id,
                     err
                 );
+                return;
             }
         }
 

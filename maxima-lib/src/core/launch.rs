@@ -341,10 +341,7 @@ pub async fn start_game(
         .env("EASteamProxyIpcPort", "0")
         .env("OriginSessionKey", launch_id.clone())
         .env("ContentId", content_id.clone())
-        .env("EAOnErrorExitRetCode", "1")
-        // Temporary A/B test: disable KYBER's ModLoader in the launched game
-        // to determine whether the transition crash depends on bundle handlers.
-        .env("KYBER_DISABLE_MODLOADER", "1");
+        .env("EAOnErrorExitRetCode", "1");
 
     match mode {
         LaunchMode::Offline(_) => todo!(),
@@ -366,7 +363,6 @@ pub async fn start_game(
         }
     };
 
-    info!("CrossOver diagnostic: forcing KYBER_DISABLE_MODLOADER=1 for this test run");
     let child = child.spawn().expect("Failed to start child");
 
     maxima.playing = Some(ActiveGameContext::new(

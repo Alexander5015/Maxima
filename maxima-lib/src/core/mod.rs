@@ -444,6 +444,10 @@ impl Maxima {
     pub fn set_game_pid(&mut self, pid: u32) {
         if let Some(ref mut playing) = self.playing {
             playing.set_game_pid(pid);
+            info!(
+                "CrossOver lifecycle monitor v2: recorded LSX-verified game PID {:?}",
+                pid
+            );
         }
     }
 
@@ -509,31 +513,54 @@ impl Maxima {
 
         let game_still_running = if let Some(game_pid) = game_pid {
             let sys = System::new_all();
-            sys.processes().iter().any(|(pid, process)| {
-                if pid.as_u32() != game_pid {
-                    return false;
-                }
+            let process = sys
+                .processes()
+                .iter()
+                .find_map(|(pid, process)| (pid.as_u32() == game_pid).then_some(process));
 
-                let exe = process
-                    .exe()
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .to_ascii_lowercase();
-                let game_dir = playing
-                    .game_path()
-                    .replace('\\', "/")
-                    .trim_end_matches('/')
-                    .to_ascii_lowercase();
-                let path_matches = exe.starts_with(&format!("{}/", game_dir));
+            let (process_present, executable_path_available, executable_matches) =
+                if let Some(process) = process {
+                    let exe = process
+                        .exe()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                        .to_ascii_lowercase();
+                    let game_dir = playing
+                        .game_path()
+                        .replace('\\', "/")
+                        .trim_end_matches('/')
+                        .to_ascii_lowercase();
+                    let path_available = !exe.is_empty();
+                    let path_matches = path_available
+                        && (exe == game_dir
+                            || exe.starts_with(&format!("{}/", game_dir)));
+                    (true, path_available, path_matches)
+                } else {
+                    (false, false, false)
+                };
 
-                let launch_id_matches = process.environ().iter().any(|entry| {
-                    let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-                    key == "MXLaunchId" && value == playing.launch_id()
-                });
+            // Once LSX has identified the process by executable path AND MXLaunchId,
+            // re-reading MXLaunchId on every poll is too strict under Wine/CrossOver:
+            // process environment metadata can be missing on later sysinfo snapshots.
+            // Trust the stored PID when it's present, and validate the executable path
+            // when CrossOver exposes it to avoid confusing a reused PID for the game.
+            let still_running = process_present
+                && (!executable_path_available || executable_matches);
 
-                path_matches && launch_id_matches
-            })
+            if first_bootstrap_exit || !still_running {
+                info!(
+                    "CrossOver lifecycle monitor v2: game_pid={:?}, process_present={}, executable_path_available={}, executable_matches={}, still_running={}",
+                    game_pid,
+                    process_present,
+                    executable_path_available,
+                    executable_matches,
+                    still_running
+                );
+            }
+
+            still_running
         } else {
+            info!("CrossOver lifecycle monitor v2: no LSX-verified game PID available");
             false
         };
 

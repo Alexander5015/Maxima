@@ -465,7 +465,7 @@ impl Maxima {
         // mislabeled as the game's own exit.
         let (launch_id, game_dir) = {
             let context = self.playing.as_ref().unwrap();
-            (context.launch_id().clone(), context.game_path().clone())
+            (context.launch_id().to_owned(), context.game_path().to_owned())
         };
 
         let playing = self.playing.as_mut().unwrap();
@@ -497,7 +497,7 @@ impl Maxima {
                     found_game_process = true;
                     let launch_id_match = process.environ().iter().any(|entry| {
                         let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-                        key == "MXLaunchId" && value == launch_id
+                        key == "MXLaunchId" && value == launch_id.as_str()
                     });
 
                     info!(

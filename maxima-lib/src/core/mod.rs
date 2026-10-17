@@ -41,7 +41,7 @@ use derive_builder::Builder;
 use derive_getters::Getters;
 use log::{error, info, warn};
 use strum_macros::IntoStaticStr;
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::{PidExt, ProcessExt, System, SystemExt};
 
 use std::sync::Arc;
 use thiserror::Error;
@@ -439,6 +439,14 @@ impl Maxima {
         }
     }
 
+    /// Records the actual game PID discovered through its LSX connection.
+    /// The spawned Child is the launcher bootstrap and may exit before the game.
+    pub fn set_game_pid(&mut self, pid: u32) {
+        if let Some(ref mut playing) = self.playing {
+            playing.set_game_pid(pid);
+        }
+    }
+
     /// Call this as often as possible from the loop you consume events from
     pub async fn update(&mut self) {
         self.update_playing_status().await;
@@ -459,76 +467,91 @@ impl Maxima {
             return;
         }
 
-        // Maxima tracks the launched bootstrap/helper child here, not the
-        // executable PID discovered from the game's LSX connection. Snapshot
-        // the launch ID and game directory so an early helper exit is not
-        // mislabeled as the game's own exit.
-        let (launch_id, game_dir) = {
-            let context = self.playing.as_ref().unwrap();
-            (context.launch_id().to_owned(), context.game_path().to_owned())
-        };
-
         let playing = self.playing.as_mut().unwrap();
-        let process_id = playing.process_mut().id();
-        match playing.process_mut().try_wait() {
-            Ok(None) => return,
-            Ok(Some(status)) => {
-                info!(
-                    "Tracked launch helper process exited: pid={:?}, status={:?}, exit_code={:?}",
-                    process_id,
-                    status,
-                    status.code()
-                );
+        let bootstrap_pid = playing.process_mut().id();
+        let first_bootstrap_exit = !playing.bootstrap_exited();
 
-                let sys = System::new_all();
-                let mut found_game_process = false;
-                for (pid, process) in sys.processes() {
-                    let name = process.name().to_owned();
-                    let name_lower = name.to_ascii_lowercase();
-                    let exe = process.exe().to_string_lossy().into_owned();
-                    let exe_lower = exe.to_ascii_lowercase();
-
-                    if !name_lower.contains("starwarsbattlefrontii.exe")
-                        && !exe_lower.contains("starwarsbattlefrontii.exe")
-                    {
-                        continue;
-                    }
-
-                    found_game_process = true;
-                    let launch_id_match = process.environ().iter().any(|entry| {
-                        let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
-                        key == "MXLaunchId" && value == launch_id.as_str()
-                    });
-
+        if first_bootstrap_exit {
+            match playing.process_mut().try_wait() {
+                Ok(None) => return,
+                Ok(Some(status)) => {
+                    playing.set_bootstrap_exited();
                     info!(
-                        "Battlefront process after helper exit: pid={}, name={:?}, exe={:?}, launch_id_match={}, game_dir={:?}, args_empty={}",
-                        pid,
-                        name,
-                        exe,
-                        launch_id_match,
-                        game_dir,
-                        process.cmd().is_empty()
+                        "Launch bootstrap process exited: pid={:?}, status={:?}, exit_code={:?}",
+                        bootstrap_pid,
+                        status,
+                        status.code()
                     );
                 }
-
-                if !found_game_process {
-                    info!(
-                        "No Battlefront II process visible after helper exit for launch_id={}",
-                        launch_id
+                Err(err) => {
+                    warn!(
+                        "Failed to query launch bootstrap status: pid={:?}, error={}",
+                        bootstrap_pid,
+                        err
                     );
+                    return;
                 }
-            }
-            Err(err) => {
-                warn!(
-                    "Failed to query tracked launch helper status: pid={:?}, error={}",
-                    process_id,
-                    err
-                );
-                return;
             }
         }
 
-        info!("Game stopped");
+        // On CrossOver, maxima-bootstrap.exe starts Battlefront II and then
+        // exits normally. Do not clear the active game merely because that
+        // helper exited; monitor the real executable PID discovered by LSX.
+        let mut game_pid = playing.game_pid();
+        if game_pid.is_none() {
+            game_pid = crate::lsx::connection::get_os_pid(playing)
+                .ok()
+                .filter(|pid| *pid != 0);
+            if let Some(pid) = game_pid {
+                playing.set_game_pid(pid);
+            }
+        }
+
+        let game_still_running = if let Some(game_pid) = game_pid {
+            let sys = System::new_all();
+            sys.processes().iter().any(|(pid, process)| {
+                if pid.as_u32() != game_pid {
+                    return false;
+                }
+
+                let exe = process
+                    .exe()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .to_ascii_lowercase();
+                let game_dir = playing
+                    .game_path()
+                    .replace('\\', "/")
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase();
+                let path_matches = exe.starts_with(&format!("{}/", game_dir));
+
+                let launch_id_matches = process.environ().iter().any(|entry| {
+                    let (key, value) = entry.split_once('=').unwrap_or((entry, ""));
+                    key == "MXLaunchId" && value == playing.launch_id()
+                });
+
+                path_matches && launch_id_matches
+            })
+        } else {
+            false
+        };
+
+        if game_still_running {
+            if first_bootstrap_exit {
+                info!(
+                    "Launch bootstrap exited, but Battlefront II is still running as PID {:?}; keeping the game context active",
+                    game_pid
+                );
+            }
+            return;
+        }
+
+        info!(
+            "Game process is no longer running; clearing active game context (bootstrap_pid={:?}, game_pid={:?})",
+            bootstrap_pid,
+            game_pid
+        );
 
         if let Some(offer) = playing.offer() {
             if *playing.cloud_saves() && offer.offer().has_cloud_save() {
@@ -536,21 +559,19 @@ impl Maxima {
                     .cloud_sync
                     .obtain_lock(offer, CloudSyncLockMode::Write)
                     .await;
-                match result {
-                    Err(err) => error!("Failed to obtain CloudSync write lock: {}", err),
-                    Ok(lock) => {
-                        let result = lock.sync_files().await;
-                        if let Err(err) = result {
-                            error!("Failed to write to CloudSync: {}", err);
-                        }
-
-                        lock.release().await.ok();
+                if let Err(err) = result {
+                    error!("Failed to obtain CloudSync write lock: {}", err);
+                } else {
+                    let lock = result.unwrap();
+                    let result = lock.sync_files().await;
+                    if let Err(err) = result {
+                        error!("Failed to write to CloudSync: {}", err);
                     }
+                    lock.release().await.ok();
                 }
             }
         }
 
-        // We need to store your BasicPresence somewhere
         self.rtm
             .set_presence(BasicPresence::Online, "", "")
             .await

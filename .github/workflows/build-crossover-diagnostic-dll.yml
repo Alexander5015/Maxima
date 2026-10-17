@@ -64,7 +64,7 @@ jobs:
             @{ Source = $launchSource; Destination = $launchDestination }
           )) {
             if (-not (Test-Path $file.Source)) {
-              throw "Diagnostic source file not found: $($file.Source)"
+              throw "CrossOver fix source file not found: $($file.Source)"
             }
             if (-not (Test-Path $file.Destination)) {
               throw "Pinned Maxima target file not found: $($file.Destination)"

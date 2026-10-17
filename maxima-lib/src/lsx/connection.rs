@@ -272,7 +272,7 @@ impl Connection {
         stream.set_nonblocking(true)?;
         stream.set_read_timeout(Some(Duration::from_secs(1)))?;
 
-        let maxima: MutexGuard<'_, Maxima> = maxima_arc.lock().await;
+        let mut maxima: MutexGuard<'_, Maxima> = maxima_arc.lock().await;
         let context: &ActiveGameContext = match maxima.playing() {
             Some(context) => context,
             None => {
@@ -313,6 +313,12 @@ impl Connection {
             warn!("Error while finding game PID: {}", err);
         } else if pid.as_ref().unwrap() == &0 {
             warn!("Failed to find PID through launch ID, things may not work!");
+        }
+
+        if let Ok(game_pid) = pid.as_ref() {
+            if *game_pid != 0 {
+                maxima.set_game_pid(*game_pid);
+            }
         }
 
         let state = Arc::new(RwLock::new(ConnectionState {

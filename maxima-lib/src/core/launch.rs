@@ -119,6 +119,12 @@ pub struct ActiveGameContext {
     injections: Vec<LibraryInjection>,
     cloud_saves: bool,
     process: Child,
+    /// PID of the actual game process discovered through its LSX connection.
+    /// The Child above is maxima-bootstrap.exe, which may exit while the game
+    /// continues running under Wine/CrossOver.
+    game_pid: Option<u32>,
+    /// Whether try_wait has already observed the bootstrap process exit.
+    bootstrap_exited: bool,
     started: bool,
 }
 
@@ -141,6 +147,8 @@ impl ActiveGameContext {
             injections: Vec::new(),
             cloud_saves,
             process,
+            game_pid: None,
+            bootstrap_exited: false,
             started: false,
         }
     }
@@ -151,6 +159,24 @@ impl ActiveGameContext {
 
     pub fn process_mut(&mut self) -> &mut Child {
         &mut self.process
+    }
+
+    pub fn game_pid(&self) -> Option<u32> {
+        self.game_pid
+    }
+
+    pub fn set_game_pid(&mut self, pid: u32) {
+        if pid != 0 {
+            self.game_pid = Some(pid);
+        }
+    }
+
+    pub fn bootstrap_exited(&self) -> bool {
+        self.bootstrap_exited
+    }
+
+    pub fn set_bootstrap_exited(&mut self) {
+        self.bootstrap_exited = true;
     }
 }
 

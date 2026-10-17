@@ -54,7 +54,7 @@ jobs:
         run: |
           $server = Join-Path $env:GITHUB_WORKSPACE "kyber-source/Module/Source/Core/Server.cpp"
           $text = [System.IO.File]::ReadAllText($server).Replace("`r`n", "`n")
-          $needle = "void Server::Initialize()`n{`n    InitializeGameHooks();`n    InitializeGamePatches();"
+          $needle = "void Server::Initialize()`n{`n    InitializeGameHooks();`n    InitializeGamePatches();`n}"
           $replacement = @"
           void Server::Initialize()
           {

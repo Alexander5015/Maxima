@@ -54,10 +54,8 @@ jobs:
         run: |
           $server = Join-Path $env:GITHUB_WORKSPACE "kyber-source/Module/Source/Core/Server.cpp"
           $text = [System.IO.File]::ReadAllText($server).Replace("`r`n", "`n")
-          $needle = "void Server::Initialize()`n{`n    InitializeGameHooks();`n    InitializeGamePatches();`n}"
+          $needle = "    InitializeGameHooks();`n    InitializeGamePatches();"
           $replacement = @"
-          void Server::Initialize()
-          {
               InitializeGameHooks();
 
               // Preserve the native socket-manager path for non-dedicated game startup.
@@ -67,10 +65,9 @@ jobs:
               }
 
               InitializeGamePatches();
-          }
           "@
           if (([regex]::Matches($text, [regex]::Escape($needle))).Count -ne 1) {
-            throw "Expected exactly one Server::Initialize patch point in pinned KYBER beta10 source."
+            throw "Expected exactly one InitializeGameHooks/InitializeGamePatches patch point in pinned KYBER beta10 source."
           }
           $text = $text.Replace($needle, $replacement.TrimEnd())
           if (-not $text.Contains("if (!g_program->m_isDedicatedServer)") -or -not $text.Contains("m_hooksRemoved = true;")) {

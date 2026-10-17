@@ -1,4 +1,4 @@
-name: Build KYBER diagnostic DLL
+name: Build KYBER CrossOver Fix DLL
 
 on:
   push:
@@ -19,7 +19,7 @@ jobs:
     name: Build rust_lib.dll with beta10.1-pinned dependencies
     runs-on: windows-latest
     steps:
-      - name: Check out this Maxima fork (diagnostic source)
+      - name: Check out this Maxima fork (CrossOver fix source)
         uses: actions/checkout@v4
         with:
           path: maxima-source
@@ -34,7 +34,7 @@ jobs:
           submodules: true
           fetch-depth: 1
 
-      - name: Verify pinned Maxima submodule and overlay diagnostic files
+      - name: Verify pinned Maxima submodule and overlay CrossOver fix files
         shell: pwsh
         run: |
           $workspace = $env:GITHUB_WORKSPACE
@@ -70,14 +70,14 @@ jobs:
               throw "Pinned Maxima target file not found: $($file.Destination)"
             }
             Copy-Item -LiteralPath $file.Source -Destination $file.Destination -Force
-            Write-Host "Overlaid diagnostic source: $($file.Source)"
+            Write-Host "Overlaid CrossOver fix source: $($file.Source)"
           }
 
           # All other Maxima files stay pinned to the beta10.1 submodule commit.
-          Write-Host "Applied the connection.rs PID fix, persisted actual game PID in launch.rs, and added bootstrap-versus-game lifecycle tracking in core/mod.rs; base Maxima revision remains $expectedMaximaCommit."
+          Write-Host "Applied the LSX PID discovery and bootstrap-versus-game lifecycle fix; base Maxima revision remains $expectedMaximaCommit."
 
       # The generated bridge file is deterministic for the pinned KYBER source.
-      # Maxima diagnostic changes are internal and do not change the bridge API.
+      # Maxima CrossOver fix changes are internal and do not change the bridge API.
       - name: Restore cached KYBER beta10.1 Rust bridge bindings
         id: frb-bindings-cache
         uses: actions/cache@v4
@@ -122,7 +122,7 @@ jobs:
         if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
         run: flutter pub global activate melos 7.1.1
 
-      - name: Work around yanked crates.io zip 2.4.2 for diagnostic build
+      - name: Work around yanked crates.io zip 2.4.2 for the CrossOver fix build
         shell: pwsh
         run: |
           # KYBER beta10.1 pins zip 2.4.2, but crates.io currently marks that
@@ -147,7 +147,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "kyber-source/Launcher/rust -> target"
-          shared-key: windows-kyber-diagnostic-dll-nightly-2026-04-06
+          shared-key: windows-kyber-crossover-fix-dll-nightly-2026-04-06
 
       - name: Generate KYBER beta10.1 workspace bindings
         if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
@@ -162,7 +162,7 @@ jobs:
             throw "KYBER codegen did not generate Launcher/rust/src/frb_generated.rs"
           }
 
-      - name: Build KYBER Rust DLL
+      - name: Build KYBER CrossOver fix DLL
         shell: pwsh
         run: |
           cargo +nightly-2026-04-06 build --release --manifest-path "$env:GITHUB_WORKSPACE\kyber-source\Launcher\rust\Cargo.toml"
@@ -175,7 +175,7 @@ jobs:
       - name: Upload DLL artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rust-lib-dll-crossover-pid-diagnostics
+          name: rust-lib-dll-crossover-fix
           path: kyber-source/Launcher/rust/target/release/rust_lib.dll
           if-no-files-found: error
           retention-days: 14

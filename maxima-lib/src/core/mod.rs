@@ -444,10 +444,6 @@ impl Maxima {
     pub fn set_game_pid(&mut self, pid: u32) {
         if let Some(ref mut playing) = self.playing {
             playing.set_game_pid(pid);
-            info!(
-                "CrossOver lifecycle monitor v2: recorded LSX-verified game PID {:?}",
-                pid
-            );
         }
     }
 
@@ -472,35 +468,18 @@ impl Maxima {
         }
 
         let playing = self.playing.as_mut().unwrap();
-        let bootstrap_pid = playing.process_mut().id();
         let first_bootstrap_exit = !playing.bootstrap_exited();
 
         if first_bootstrap_exit {
             match playing.process_mut().try_wait() {
                 Ok(None) => return,
-                Ok(Some(status)) => {
-                    playing.set_bootstrap_exited();
-                    info!(
-                        "Launch bootstrap process exited: pid={:?}, status={:?}, exit_code={:?}",
-                        bootstrap_pid,
-                        status,
-                        status.code()
-                    );
-                }
-                Err(err) => {
-                    warn!(
-                        "Failed to query launch bootstrap status: pid={:?}, error={}",
-                        bootstrap_pid,
-                        err
-                    );
-                    return;
-                }
+                Ok(Some(_)) => playing.set_bootstrap_exited(),
+                Err(_) => return,
             }
         }
 
-        // On CrossOver, maxima-bootstrap.exe starts Battlefront II and then
-        // exits normally. Do not clear the active game merely because that
-        // helper exited; monitor the real executable PID discovered by LSX.
+        // CrossOver's bootstrap can exit while the actual game keeps running.
+        // Use the PID discovered through LSX, falling back to discovery if needed.
         let mut game_pid = playing.game_pid();
         if game_pid.is_none() {
             game_pid = crate::lsx::connection::get_os_pid(playing)
@@ -518,83 +497,53 @@ impl Maxima {
                 .iter()
                 .find_map(|(pid, process)| (pid.as_u32() == game_pid).then_some(process));
 
-            let (process_present, executable_path_available, executable_matches) =
-                if let Some(process) = process {
-                    let exe = process
-                        .exe()
-                        .to_string_lossy()
-                        .replace('\\', "/")
-                        .to_ascii_lowercase();
-                    let game_dir = playing
-                        .game_path()
-                        .replace('\\', "/")
-                        .trim_end_matches('/')
-                        .to_ascii_lowercase();
-                    let path_available = !exe.is_empty();
-                    let path_matches = path_available
-                        && (exe == game_dir
-                            || exe.starts_with(&format!("{}/", game_dir)));
-                    (true, path_available, path_matches)
-                } else {
-                    (false, false, false)
-                };
+            if let Some(process) = process {
+                let exe = process
+                    .exe()
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .to_ascii_lowercase();
+                let game_dir = playing
+                    .game_path()
+                    .replace('\\', "/")
+                    .trim_end_matches('/')
+                    .to_ascii_lowercase();
+                let executable_path_available = !exe.is_empty();
+                let executable_matches = executable_path_available
+                    && (exe == game_dir || exe.starts_with(&format!("{}/", game_dir)));
 
-            // Once LSX has identified the process by executable path AND MXLaunchId,
-            // re-reading MXLaunchId on every poll is too strict under Wine/CrossOver:
-            // process environment metadata can be missing on later sysinfo snapshots.
-            // Trust the stored PID when it's present, and validate the executable path
-            // when CrossOver exposes it to avoid confusing a reused PID for the game.
-            let still_running = process_present
-                && (!executable_path_available || executable_matches);
-
-            if first_bootstrap_exit || !still_running {
-                info!(
-                    "CrossOver lifecycle monitor v2: game_pid={:?}, process_present={}, executable_path_available={}, executable_matches={}, still_running={}",
-                    game_pid,
-                    process_present,
-                    executable_path_available,
-                    executable_matches,
-                    still_running
-                );
+                // The PID was verified by executable path and MXLaunchId at LSX discovery.
+                // CrossOver may not expose environment metadata consistently on later scans.
+                !executable_path_available || executable_matches
+            } else {
+                false
             }
-
-            still_running
         } else {
-            info!("CrossOver lifecycle monitor v2: no LSX-verified game PID available");
             false
         };
 
         if game_still_running {
-            if first_bootstrap_exit {
-                info!(
-                    "Launch bootstrap exited, but Battlefront II is still running as PID {:?}; keeping the game context active",
-                    game_pid
-                );
-            }
             return;
         }
 
-        info!(
-            "Game process is no longer running; clearing active game context (bootstrap_pid={:?}, game_pid={:?})",
-            bootstrap_pid,
-            game_pid
-        );
+        info!("Game stopped");
 
         if let Some(offer) = playing.offer() {
             if *playing.cloud_saves() && offer.offer().has_cloud_save() {
-                let result = self
+                match self
                     .cloud_sync
                     .obtain_lock(offer, CloudSyncLockMode::Write)
-                    .await;
-                if let Err(err) = result {
-                    error!("Failed to obtain CloudSync write lock: {}", err);
-                } else {
-                    let lock = result.unwrap();
-                    let result = lock.sync_files().await;
-                    if let Err(err) = result {
-                        error!("Failed to write to CloudSync: {}", err);
+                    .await
+                {
+                    Err(err) => error!("Failed to obtain CloudSync write lock: {}", err),
+                    Ok(lock) => {
+                        let result = lock.sync_files().await;
+                        if let Err(err) = result {
+                            error!("Failed to write to CloudSync: {}", err);
+                        }
+
+                        lock.release().await.ok();
                     }
-                    lock.release().await.ok();
                 }
             }
         }

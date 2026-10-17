@@ -100,7 +100,8 @@ jobs:
         run: rustc +nightly-2026-04-06 --version --verbose
 
       - name: Install Protoc
-        if: steps.frb-bindings-cache.outputs.cache-hit != 'true'
+        # Rust prost-build also needs protoc when compiling the DLL, even when
+        # the generated Flutter Rust Bridge file is restored from cache.
         uses: arduino/setup-protoc@v3
         with:
           version: 23.x

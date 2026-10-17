@@ -74,7 +74,7 @@ jobs:
           }
 
           # All other Maxima files stay pinned to the beta10.1 submodule commit.
-          Write-Host "Applied connection.rs PID fix, core/mod.rs exit-status logging, and launch.rs temporary ModLoader-disable test; base Maxima revision remains $expectedMaximaCommit."
+          Write-Host "Applied the connection.rs PID fix, persisted actual game PID in launch.rs, and added bootstrap-versus-game lifecycle tracking in core/mod.rs; base Maxima revision remains $expectedMaximaCommit."
 
       # The generated bridge file is deterministic for the pinned KYBER source.
       # Maxima diagnostic changes are internal and do not change the bridge API.
